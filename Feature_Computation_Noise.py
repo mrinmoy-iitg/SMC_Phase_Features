@@ -27,32 +27,46 @@ def normalize_signal(Xin):
     return Xin
     
 
-
-
-def signal_mixing(Xin_data, Xin_noise, target_dB):
-    sp_len = len(Xin_data)
-    mu_len = len(Xin_noise)
-    common_len = np.min([sp_len, mu_len])
-    if len(Xin_data)>common_len:
-        len_diff = len(Xin_data)-common_len
-        random_start_sample = np.random.randint(len_diff)
-        Xin_data = Xin_data[random_start_sample:random_start_sample+common_len]
-    else:
-        Xin_data = Xin_data[:common_len]
+def signal_mixing(Xin_data, Xin_noise, target_dB, fs):
+    # x_len = len(Xin_data)
+    # no_len = len(Xin_noise)
+    # common_len = np.min([x_len, no_len, fs*10])
+    # if len(Xin_data)>common_len:
+    #     len_diff = len(Xin_data)-common_len
+    #     random_start_sample = np.random.randint(len_diff)
+    #     Xin_data = Xin_data[random_start_sample:random_start_sample+common_len]
+    # else:
+    #     Xin_data = Xin_data[:common_len]
         
-    if len(Xin_noise)>common_len:
-        len_diff = len(Xin_noise)-common_len
-        random_start_sample = np.random.randint(len_diff)
-        Xin_noise = Xin_noise[random_start_sample:random_start_sample+common_len]
-    else:
-        Xin_noise = Xin_noise[:common_len]
+    # if len(Xin_noise)>common_len:
+    #     len_diff = len(Xin_noise)-common_len
+    #     random_start_sample = np.random.randint(len_diff)
+    #     Xin_noise = Xin_noise[random_start_sample:random_start_sample+common_len]
+    # else:
+    #     Xin_noise = Xin_noise[:common_len]
+
+    x_len = len(Xin_data)
+    no_len = len(Xin_noise)
+    # print('Data len: ', x_len, no_len)
+    if no_len<x_len:
+        Xin_noise_temp = Xin_noise.copy()
+        while no_len<x_len:
+            Xin_noise = np.append(Xin_noise, Xin_noise_temp)
+            no_len = len(Xin_noise)
+    no_len = len(Xin_noise)
+    common_len = np.min([x_len, no_len])
+    Xin_data = Xin_data[:common_len]
+    Xin_noise = Xin_noise[:common_len]
+    x_len = len(Xin_data)
+    no_len = len(Xin_noise)
+    # print('Data len: ', x_len, no_len)
         
     data_energy = np.sum(np.power(Xin_data,2))/len(Xin_data)
     noise_energy = np.sum(np.power(Xin_noise,2))/len(Xin_noise)
     
     req_noise_energy = data_energy/np.power(10,(target_dB/10))
-    mu_mult_fact = np.sqrt(req_noise_energy/noise_energy)
-    Xin_noise_scaled = mu_mult_fact*Xin_noise
+    no_mult_fact = np.sqrt(req_noise_energy/noise_energy)
+    Xin_noise_scaled = no_mult_fact*Xin_noise
     
     Xin_mix = Xin_data + Xin_noise_scaled
     Xin_mix = normalize_signal(Xin_mix)
@@ -74,25 +88,23 @@ def __init__():
             'output_folder': section['output_folder'],
             'Tw': int(section['Tw']), # frame size in miliseconds
             'Ts': int(section['Ts']), # frame shift in miliseconds
-            'n_mfcc': int(section['n_mfcc']),
-            'n_mels': int(section['n_mels']),
             'no_filt': int(section['no_filt']),
             'n_cep': int(section['n_cep']),
             'numBands': int(section['numBands']),
-            'silThresh': float(section['silThresh']),
-            'preemphasis': section.getboolean('preemphasis'),
-            'intervalSize': int(section['intervalSize']), # interval size in miliseconds
-            'intervalShift': int(section['intervalShift']), # interval shift in miliseconds
-            'L': 22,
             'delta_win_size': 9,
             'NBANDS': 18,
             'NORDER': 1000,
             'LPFFc': 28,
             'K': 36,
+            'silThresh': float(section['silThresh']),
+            'preemphasis': section.getboolean('preemphasis'),
+            'intervalSize': int(section['intervalSize']), # interval size in miliseconds
+            'intervalShift': int(section['intervalShift']), # interval shift in miliseconds
+            'phase_feat_delta': section.getboolean('phase_feat_delta'),
             'classes': {0:'music', 1:'speech'},
-            'all_features': ['Khonglah_et_al', 'Sell_et_al', 'MFCC', 'Melspectrogram', 'Phase_based'],
+            'all_features': ['Khonglah_et_al', 'Sell_et_al', 'MFCC', 'Melspectrogram', 'Phase_based'], # 'MGDCC'
             'featName': '',
-            'noise_levels': [10, 8, 5, 2, 1, 0], # in dB
+            'noise_levels': [0], # [10, 8, 5, 2, 1, 0], # in dB
             }
 
     return PARAMS
@@ -103,7 +115,7 @@ if __name__ == '__main__':
     PARAMS = __init__()
     print('\n\n\n', PARAMS['today'])
     
-    opDir = PARAMS['output_folder'] + '/' + PARAMS['dataset_name'] + '_Noisy/IFDur=' + str(PARAMS['intervalSize']) + 'frms_Tw=' + str(PARAMS['Tw']) + 'ms_Ts=' + str(PARAMS['Ts']).replace('.','-') + 'ms_' + PARAMS['today'] + '/'    
+    opDir = PARAMS['output_folder'] + '/' + PARAMS['dataset_name'] + '_Noisy/IFDur=' + str(PARAMS['intervalSize']) + 'frms_Tw=' + str(PARAMS['Tw']) + 'ms_Ts=' + str(PARAMS['Ts']).replace('.','-') + 'ms_' + PARAMS['today'] + '_0dB/'    
     
     if not os.path.exists(opDir):
         os.makedirs(opDir)
@@ -154,15 +166,19 @@ if __name__ == '__main__':
                     else:
                         FV_khonglah_et_al = {}
                         for target_dB in PARAMS['noise_levels']:
-                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB)
+                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB, fs)
                             FV_khonglah_et_al_db = None
                             FV_khonglah_et_al_db = khonglah.compute_Khonglah_et_al_features(PARAMS, Xin_mix, fs)
                             nFrames = np.shape(FV_khonglah_et_al_db)[0]
-                            sparse_idx = []
-                            for idx in range(0, nFrames, 1000):
-                                sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
-                            sparse_idx = np.array(sparse_idx)
-                            FV_khonglah_et_al[target_dB] = FV_khonglah_et_al_db[sparse_idx,:]
+
+                            # sparse_idx = []
+                            # for idx in range(0, nFrames, 1000):
+                            #     sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
+                            # sparse_idx = np.array(sparse_idx)
+                            # FV_khonglah_et_al[target_dB] = FV_khonglah_et_al_db[sparse_idx,:]
+
+                            FV_khonglah_et_al[target_dB] = FV_khonglah_et_al_db.copy()
+
                             print('\tKhonglah et al. features computed: ', np.shape(FV_khonglah_et_al_db), np.shape(FV_khonglah_et_al[target_dB]), target_dB, 'dB')
                         np.save(fName_khonglah_et_al, FV_khonglah_et_al, allow_pickle=True)
                 '''
@@ -184,15 +200,19 @@ if __name__ == '__main__':
                     else:
                         FV_sell_et_al = {}
                         for target_dB in PARAMS['noise_levels']:
-                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB)
+                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB, fs)
                             FV_sell_et_al_db = None
                             FV_sell_et_al_db = sell.compute_Sell_et_al_features(PARAMS, Xin_mix, fs, frame_silMarker)
-                            nFrames = np.shape(FV_sell_et_al_db)[0]
-                            sparse_idx = []
-                            for idx in range(0, nFrames, 1000):
-                                sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
-                            sparse_idx = np.array(sparse_idx)
-                            FV_sell_et_al[target_dB] = FV_sell_et_al_db[sparse_idx,:]
+
+                            # nFrames = np.shape(FV_sell_et_al_db)[0]
+                            # sparse_idx = []
+                            # for idx in range(0, nFrames, 1000):
+                            #     sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
+                            # sparse_idx = np.array(sparse_idx)
+                            # FV_sell_et_al[target_dB] = FV_sell_et_al_db[sparse_idx,:]
+
+                            FV_sell_et_al[target_dB] = FV_sell_et_al_db.copy()
+
                             print('\tSell et al. features computed: ', np.shape(FV_sell_et_al_db), np.shape(FV_sell_et_al[target_dB]), target_dB, 'dB')
                         np.save(fName_sell_et_al, FV_sell_et_al, allow_pickle=True)
                 '''
@@ -201,10 +221,10 @@ if __name__ == '__main__':
     
     
                 '''
-                MFCC features ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                MFCC-39 features ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                 '''
                 if PARAMS['featName']=='MFCC':
-                    opDirFold_mfcc = opDir + '/MFCC/' + fold + '/'
+                    opDirFold_mfcc = opDir + '/MFCC-39/' + fold + '/'
                     if not os.path.exists(opDirFold_mfcc):
                         os.makedirs(opDirFold_mfcc)
                     fName_mfcc = opDirFold_mfcc + '/' + audio.split('/')[-1].split('.')[0] + '.npy'
@@ -216,9 +236,9 @@ if __name__ == '__main__':
                         Nframeshift = int(PARAMS['Ts']*fs/1000)
                         FV_mfcc_D_DD = {}
                         for target_dB in PARAMS['noise_levels']:
-                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB)
+                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB, fs)
                             FV_mfcc_db = None
-                            FV_mfcc_db = librosa.feature.mfcc(y=Xin_mix, sr=fs, n_mfcc=PARAMS['n_mfcc'], n_fft=Nframesize, hop_length=Nframeshift, center=False, n_mels=PARAMS['n_mels'])
+                            FV_mfcc_db = librosa.feature.mfcc(y=Xin_mix, sr=fs, n_mfcc=PARAMS['n_cep'], n_fft=Nframesize, hop_length=Nframeshift, center=False, n_mels=PARAMS['no_filt'])
                             FV_mfcc_db = FV_mfcc_db.T
                             delta_win_size = np.min([PARAMS['delta_win_size'], np.shape(FV_mfcc_db)[0]])
                             if delta_win_size%2==0: # delta_win_size must be an odd integer >=3
@@ -227,19 +247,22 @@ if __name__ == '__main__':
                                 FV_mfcc_db = np.append(FV_mfcc_db, FV_mfcc_db, axis=0)
                             D_FV_mfcc_db = librosa.feature.delta(FV_mfcc_db, width=delta_win_size, axis=0)
                             DD_FV_mfcc_db = librosa.feature.delta(D_FV_mfcc_db, width=delta_win_size, axis=0)
+                            FV_mfcc_D_DD_db = None
                             FV_mfcc_D_DD_db = FV_mfcc_db
                             FV_mfcc_D_DD_db = np.append(FV_mfcc_D_DD_db, D_FV_mfcc_db, 1)
                             FV_mfcc_D_DD_db = np.append(FV_mfcc_D_DD_db, DD_FV_mfcc_db, 1)
                             FV_mfcc_D_DD_db = np.array(FV_mfcc_D_DD_db).astype(np.float32)
 
-                            nFrames = np.shape(FV_mfcc_D_DD_db)[0]
-                            sparse_idx = []
-                            for idx in range(0, nFrames, 1000):
-                                sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
-                            sparse_idx = np.array(sparse_idx)
-                            FV_mfcc_D_DD[target_dB] = FV_mfcc_D_DD_db[sparse_idx,:]
+                            # nFrames = np.shape(FV_mfcc_D_DD_db)[0]
+                            # sparse_idx = []
+                            # for idx in range(0, nFrames, 1000):
+                            #     sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
+                            # sparse_idx = np.array(sparse_idx)
+                            # FV_mfcc_D_DD[target_dB] = FV_mfcc_D_DD_db[sparse_idx,:]
 
-                            print('\tMFCC features computed: ', np.shape(FV_mfcc_D_DD_db), np.shape(FV_mfcc_D_DD[target_dB]), target_dB, 'dB')
+                            FV_mfcc_D_DD[target_dB] = FV_mfcc_D_DD_db.copy()
+
+                            print('\tMFCC-39 features computed: ', np.shape(FV_mfcc_D_DD_db), np.shape(FV_mfcc_D_DD[target_dB]), target_dB, 'dB')
                         np.save(fName_mfcc, FV_mfcc_D_DD, allow_pickle=True)
 
                 '''
@@ -263,15 +286,19 @@ if __name__ == '__main__':
                         Nframeshift = int(PARAMS['Ts']*fs/1000)
                         FV_melspectrogram = {}
                         for target_dB in PARAMS['noise_levels']:
-                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB)
+                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB, fs)
                             FV_melspectrogram_db = None
-                            FV_melspectrogram_db = librosa.feature.melspectrogram(y=Xin_mix, sr=fs, n_fft=Nframesize, hop_length=Nframeshift, center=False, n_mels=PARAMS['n_mels'])
-                            nFrames = np.shape(FV_melspectrogram_db)[1]
-                            sparse_idx = []
-                            for idx in range(0, nFrames, 1000):
-                                sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
-                            sparse_idx = np.array(sparse_idx)
-                            FV_melspectrogram[target_dB] = FV_melspectrogram_db[:, sparse_idx]
+                            FV_melspectrogram_db = librosa.feature.melspectrogram(y=Xin_mix, sr=fs, n_fft=Nframesize, hop_length=Nframeshift, center=False, n_mels=PARAMS['no_filt'])
+
+                            # nFrames = np.shape(FV_melspectrogram_db)[1]
+                            # sparse_idx = []
+                            # for idx in range(0, nFrames, 1000):
+                            #     sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
+                            # sparse_idx = np.array(sparse_idx)
+                            # FV_melspectrogram[target_dB] = FV_melspectrogram_db[:, sparse_idx]
+
+                            FV_melspectrogram[target_dB] = FV_melspectrogram_db.copy()
+
                             print('\tMelspectrogram features computed: ', np.shape(FV_melspectrogram_db), np.shape(FV_melspectrogram[target_dB]), target_dB, 'dB')
                         np.save(fName_melspectrogram, FV_melspectrogram, allow_pickle=True)
 
@@ -310,20 +337,25 @@ if __name__ == '__main__':
                         MGDCC_D_DD = {}
                         IFCC_D_DD = {}
                         for target_dB in PARAMS['noise_levels']:
-                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB)
+                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB, fs)
                             HNGDMFCC_D_DD_db = None
                             MGDCC_D_DD_db = None
                             IFCC_D_DD_db = None
                             HNGDMFCC_D_DD_db, timeTaken_hngdmfcc, MGDCC_D_DD_db, timeTaken_mgdcc, IFCC_D_DD_db, timeTaken_ifcc = phfeat.compute_phase_based_features(PARAMS, Xin_mix, fs)            
 
-                            nFrames = np.shape(HNGDMFCC_D_DD_db)[0]
-                            sparse_idx = []
-                            for idx in range(0, nFrames, 1000):
-                                sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
-                            sparse_idx = np.array(sparse_idx)
-                            HNGDMFCC_D_DD[target_dB] = HNGDMFCC_D_DD_db[sparse_idx,:]
-                            MGDCC_D_DD[target_dB] = MGDCC_D_DD_db[sparse_idx, :]
-                            IFCC_D_DD[target_dB] = IFCC_D_DD_db[sparse_idx, :]
+                            # nFrames = np.shape(HNGDMFCC_D_DD_db)[0]
+                            # sparse_idx = []
+                            # for idx in range(0, nFrames, 1000):
+                            #     sparse_idx.extend(list(range(idx, np.min([idx+68, nFrames]))))
+                            # sparse_idx = np.array(sparse_idx)
+                            # HNGDMFCC_D_DD[target_dB] = HNGDMFCC_D_DD_db[sparse_idx,:]
+                            # MGDCC_D_DD[target_dB] = MGDCC_D_DD_db[sparse_idx, :]
+                            # IFCC_D_DD[target_dB] = IFCC_D_DD_db[sparse_idx, :]
+
+                            HNGDMFCC_D_DD[target_dB] = HNGDMFCC_D_DD_db.copy()
+                            MGDCC_D_DD[target_dB] = MGDCC_D_DD_db.copy()
+                            IFCC_D_DD[target_dB] = IFCC_D_DD_db.copy()
+
                             print('\tHNGDMFCC feature computed: (%d, %d)\t (%d, %d)\t%.2f secs' % (np.shape(HNGDMFCC_D_DD_db)[0], np.shape(HNGDMFCC_D_DD_db)[1], np.shape(HNGDMFCC_D_DD[target_dB])[0], np.shape(HNGDMFCC_D_DD[target_dB])[1], timeTaken_hngdmfcc))
                             print('\tMGDCC feature computed: (%d, %d)\t (%d, %d)\t%.2f secs' % (np.shape(MGDCC_D_DD_db)[0], np.shape(MGDCC_D_DD_db)[1], np.shape(MGDCC_D_DD[target_dB])[0], np.shape(MGDCC_D_DD[target_dB])[1], timeTaken_mgdcc))
                             print('\tIFCC feature computed: (%d, %d)\t (%d, %d)\t%.2f secs' % (np.shape(IFCC_D_DD_db)[0], np.shape(IFCC_D_DD_db)[1], np.shape(IFCC_D_DD[target_dB])[0], np.shape(IFCC_D_DD[target_dB])[1], timeTaken_ifcc), target_dB, 'dB', end='\n\n\n')
@@ -332,6 +364,33 @@ if __name__ == '__main__':
                         np.save(fName_mgdcc, MGDCC_D_DD, allow_pickle=True)
                         np.save(fName_ifcc, IFCC_D_DD, allow_pickle=True)
 
+                '''
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                '''
+
+
+                ''' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                MGDCC
+                '''
+                if PARAMS['featName']=='MGDCC':
+                    PARAMS['gamma'] = 0.3
+                    PARAMS['rho'] = 0.1
+                    opDirFold_mgdcc = opDir + '/MGDCC/' + fold + '/'
+                    if not os.path.exists(opDirFold_mgdcc):
+                        os.makedirs(opDirFold_mgdcc)
+                    fName_mgdcc = opDirFold_mgdcc + '/' + audio.split('/')[-1].split('.')[0] + '.npy'
+                    matchingFiles = glob.glob(fName_mgdcc)
+                    if len(matchingFiles)>0:
+                        print('File exists!!!\t',matchingFiles,'\n\n\n')
+                    else:
+                        MGDCC_D_DD = {}
+                        for target_dB in PARAMS['noise_levels']:
+                            Xin_mix = signal_mixing(Xin_data, Xin_noise, target_dB, fs)
+                            MGDCC_D_DD_db = None
+                            MGDCC_D_DD_db, timeTaken_mgdcc = phfeat.compute_mgdcc_rho_gamma(PARAMS, Xin_mix, fs)            
+                            MGDCC_D_DD[target_dB] = MGDCC_D_DD_db.copy()
+                            print('\tMGDCC feature computed: (%d, %d)\t (%d, %d)\t%.2f secs' % (np.shape(MGDCC_D_DD_db)[0], np.shape(MGDCC_D_DD_db)[1], np.shape(MGDCC_D_DD[target_dB])[0], np.shape(MGDCC_D_DD[target_dB])[1], timeTaken_mgdcc))
+                        np.save(fName_mgdcc, MGDCC_D_DD, allow_pickle=True)
                 '''
                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                 '''
