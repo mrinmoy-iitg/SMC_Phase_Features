@@ -148,3 +148,62 @@ def compute_phase_based_features(PARAMS, Xin, fs):
     
     return HNGDMFCC_D_DD.astype(np.float32), timeTaken_hngdmfcc, MGDCC_D_DD.astype(np.float32), timeTaken_mgdcc, IFCC_D_DD.astype(np.float32), timeTaken_ifcc
 
+
+
+
+def compute_mgdcc_rho_gamma(PARAMS, Xin, fs):
+    '''
+    The input audio is split into 1sec segments to compute these features
+    because the IFCC computation process takes an extremely long time for long audio
+    sequences
+    '''
+    grp_phase = np.empty([])
+    MGDCC = np.empty([])
+    MGDCC_D_DD = np.empty([])
+
+    frame_size = int(PARAMS['Tw']*fs/1000)
+    frame_shift = int(PARAMS['Ts']*fs/1000)
+    frames = librosa.util.frame(Xin, frame_size, frame_shift, axis=0)
+    nFrames = np.shape(frames)[0]
+    
+    timeTaken_mgdcc = 0
+    segment = 0
+    segment_dur = 0
+
+    frmStart = 0
+    frmEnd = 0
+    for frmStart in range(0, nFrames, PARAMS['intervalSize']):
+        frmEnd = np.min([frmStart + PARAMS['intervalSize'], nFrames])
+        frames_part = frames[frmStart:frmEnd, :]
+        # print('Frames: ', np.shape(frames_part))
+        
+        startTime_mgdcc = time.time()
+        grp_phase_part, MGDCC_part = mgd.compute_mgdcc(PARAMS, frames_part, fs, PARAMS['gamma'], PARAMS['rho'])
+        if np.size(grp_phase)<=1:
+            grp_phase = grp_phase_part
+            MGDCC = MGDCC_part
+        else:
+            # print('grp_phase: ', np.shape(grp_phase), np.shape(grp_phase_part))
+            grp_phase = np.append(grp_phase, grp_phase_part, axis=1)
+            # print('MGDCC_D_DD: ', np.shape(MGDCC_D_DD), np.shape(MGDCC_D_DD_part))
+            MGDCC = np.append(MGDCC, MGDCC_part, axis=0)
+        endTime_mgdcc = time.time()
+        timeTaken_mgdcc += endTime_mgdcc-startTime_mgdcc
+
+        segment += 1
+        segment_dur += (np.shape(frames_part)[0]/nFrames)*(len(Xin)/fs)
+        print('\tSegment %.3d (%.2f sec/%.2f sec)\tTime taken: mgdcc=%.2f sec' % (segment+1, segment_dur, len(Xin)/fs, timeTaken_mgdcc), end='\r', flush=True)
+    print(' ')
+
+    delta_win_size = np.min([PARAMS['delta_win_size'], np.shape(MGDCC)[0]])
+    if delta_win_size%2==0: # delta_win_size must be an odd integer >=3
+        delta_win_size = np.max([delta_win_size-1, 3])
+    if np.shape(MGDCC)[0]<3:
+        MGDCC = np.append(MGDCC, MGDCC, axis=0)
+    D_MGDCC = librosa.feature.delta(MGDCC, width=delta_win_size, axis=0)
+    DD_MGDCC = librosa.feature.delta(D_MGDCC, width=delta_win_size, axis=0)
+    MGDCC_D_DD = MGDCC
+    MGDCC_D_DD = np.append(MGDCC_D_DD, D_MGDCC, 1)
+    MGDCC_D_DD = np.append(MGDCC_D_DD, DD_MGDCC, 1)
+    
+    return MGDCC_D_DD.astype(np.float32), timeTaken_mgdcc

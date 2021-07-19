@@ -18,6 +18,7 @@ def removeSilence(Xin, fs, Tw, Ts, alpha=0.05, beta=0.1):
     frameShift = int((Ts*fs)/1000) # Frame shift in number of samples
     
     Rmse = librosa.feature.rms(y=Xin, frame_length=frameSize, hop_length=frameShift)
+    # print('RMSE: ', np.shape(Rmse))
     energy = Rmse[0,:] #pow(Rmse,2)
     energyThresh = alpha*np.max(energy) # TEST WITH MEAN
 

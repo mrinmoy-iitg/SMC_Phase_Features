@@ -52,7 +52,7 @@ def linweights(L, numBands):
 
 
 def ifccExtract(PARAMS, x, fs):
-    ncep = PARAMS['n_cep'] # earlier PARAMS['n_mfcc']=13
+    # ncep = PARAMS['n_cep'] # earlier PARAMS['n_mfcc']=13
     x *= 2**15
     x = ditherit(x,1,'bit');
     pre_emph = False # Preemphasis is  done globally    
@@ -75,12 +75,12 @@ def ifccExtract(PARAMS, x, fs):
     minIdx = int(np.floor(2*L*minFreq/fs))
     maxIdx = int(np.floor(2*L*maxFreq/fs))
     L = maxIdx-minIdx
-#    numBands = 40
+    # numBands = 40
     T, midFreq = linweights(L, PARAMS['numBands'])
     W = np.zeros((N, PARAMS['numBands']))
     W[minIdx:maxIdx,:] = T
     X_reap = np.repeat(np.array(X, ndmin=2).T, PARAMS['numBands'], axis=1)
-#    print('WX: (%d,%d) (%d,%d) %.2fsec' % (np.shape(W)[0], np.shape(W)[1], np.shape(X_reap)[0], np.shape(X_reap)[1], len(x)/fs))
+    # print('WX: (%d,%d) (%d,%d) %.2fsec' % (np.shape(W)[0], np.shape(W)[1], np.shape(X_reap)[0], np.shape(X_reap)[1], len(x)/fs))
     WX = np.multiply(W, X_reap)
 
     midFreq = (midFreq+minIdx-1)/N*2*np.pi
@@ -94,15 +94,15 @@ def ifccExtract(PARAMS, x, fs):
     Num = np.real(np.multiply(np.conj(wx), dwx))
     Den = np.real(np.multiply(wx, np.conj(wx)))
     smif = np.zeros((N, PARAMS['numBands']))
-#    print('ifcc extract: ', np.shape(window), np.shape(Num), np.shape(Den))
+    # print('ifcc extract: ', np.shape(window), np.shape(Num), np.shape(Den))
     for band in range(PARAMS['numBands']):
         Num[:,band] = scipy.signal.lfilter(window, 1, Num[:,band])
         Den[:,band] = scipy.signal.lfilter(window, 1, Den[:,band])
-#    print('ifcc extract post filter: ', np.shape(Num), np.shape(Den))
+    # print('ifcc extract post filter: ', np.shape(Num), np.shape(Den))
 
     smif = np.divide(Num, Den+1e-10)*(2*np.pi/N)
     smif = np.subtract(smif,midFreq)
-#    print('ifcc extract smif: ', np.shape(smif))
+    # print('ifcc extract smif: ', np.shape(smif))
 
     window = np.hamming(frameSize)
     ifSpec = np.zeros((numFrames, PARAMS['numBands']))
@@ -115,10 +115,10 @@ def ifccExtract(PARAMS, x, fs):
         window_bands = np.repeat(np.array(window, ndmin=2).T, PARAMS['numBands'], axis=1)
         ifSpec[i, :] = np.sum(np.multiply(smif_frame, window_bands), axis=0)
     ifSpec = ifSpec[:, -1::-1]
-#    print('ifcc extract ifSpec: ', np.shape(ifSpec))
+    # print('ifcc extract ifSpec: ', np.shape(ifSpec))
 
-    ifcc = scipy.fftpack.dct(ifSpec.T, n=ncep, axis=0).T
-#    print('ifcc extract ifcc: ', np.shape(ifcc))
+    ifcc = scipy.fftpack.dct(ifSpec.T, n=PARAMS['n_cep'], axis=0).T
+    # print('ifcc extract ifcc: ', np.shape(ifcc))
     
     return instFreq, ifSpec, ifcc
 
@@ -127,7 +127,7 @@ def ifccExtract(PARAMS, x, fs):
 def compute_ifcc(PARAMS, Xin, fs):
     IF_SPEC = np.empty([])
     IFCC = np.empty([])
-#    print('IFCC extract Xin_part: ', np.shape(Xin))
+    # print('IFCC extract Xin_part: ', np.shape(Xin))
     
     IF, IF_SPEC, IFCC = ifccExtract(PARAMS, Xin, fs)   
     

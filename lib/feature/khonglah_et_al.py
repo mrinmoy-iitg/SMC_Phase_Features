@@ -626,9 +626,13 @@ def compute_Khonglah_et_al_features(PARAMS, Xin, fs):
     FV = np.array(First_Peak, ndmin=2).T
     
     ms1, ModSpec = modspec.modulationspectrum(Xin, fs, PARAMS['NBANDS'], PARAMS['NORDER'], PARAMS['LPFFc'], Fmin=0, Fmax=fs/2, WL=PARAMS['Tw'], OLN=PARAMS['Ts'])
+    if len(ModSpec)<len(Xin):
+        ModSpec = np.append(ModSpec, np.zeros(len(Xin)-len(ModSpec)))
+    else:
+        ModSpec = ModSpec[:len(Xin)]
     ModSpec_frames = librosa.util.frame(ModSpec, Nframesize, Nframeshift, axis=0)
     ModSpec_feat = np.mean(ModSpec_frames, axis=1)
-    # print('\tModSpec_feat: ', np.shape(ModSpec_feat))
+    # print('\tModSpec_feat: ', np.shape(Xin), np.shape(ModSpec), np.shape(ModSpec_feat), np.shape(FV))
     FV = np.append(FV, np.array(ModSpec_feat, ndmin=2).T, axis=1)
     
     index_peak_arr, hilbert_envelope, peak_val_arr, PSR_inter, PSR = peak_to_side_var(Xin, fs, PARAMS['Tw'], PARAMS['Ts'], EpochStrength)
@@ -646,7 +650,7 @@ def compute_Khonglah_et_al_features(PARAMS, Xin, fs):
     # print('\tEnergy: ', np.shape(Energy))
     FV = np.append(FV, np.array(Energy, ndmin=2).T, axis=1)
         
-    Mel_FBE = librosa.feature.melspectrogram(y=Xin, sr=fs, n_fft=Nframesize, hop_length=Nframeshift, n_mels=PARAMS['L'], center=False)
+    Mel_FBE = librosa.feature.melspectrogram(y=Xin, sr=fs, n_fft=Nframesize, hop_length=Nframeshift, n_mels=PARAMS['no_filt'], center=False)
     LogMelEnergy = np.sum(np.log10(Mel_FBE[:18, :]), axis=0)
     # print('\tLogMelEnergy: ', np.shape(LogMelEnergy), np.shape(Mel_FBE))
     FV = np.append(FV, np.array(LogMelEnergy, ndmin=2).T, axis=1)

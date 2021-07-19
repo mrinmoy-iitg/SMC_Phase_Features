@@ -122,6 +122,10 @@ def compute_Sell_et_al_features(PARAMS, Xin, fs, frame_silMarker):
     FV = np.append(FV, np.array(silFrequency, ndmin=2).T, axis=1)
 
     ms1, ModSpec = modspec.modulationspectrum(Xin, fs, PARAMS['NBANDS'], PARAMS['NORDER'], PARAMS['LPFFc'], Fmin=0, Fmax=fs/2, WL=PARAMS['Tw'], OLN=PARAMS['Ts'])
+    if len(ModSpec)<len(Xin):
+        ModSpec = np.append(ModSpec, np.zeros(len(Xin)-len(ModSpec)))
+    else:
+        ModSpec = ModSpec[:len(Xin)]
     ModSpec_frames = librosa.util.frame(ModSpec, Nframesize, Nframeshift, axis=0)
     ModSpec_feat = np.mean(ModSpec_frames, axis=1)
     # print('\tModSpec_feat: ', np.shape(ModSpec_feat))
