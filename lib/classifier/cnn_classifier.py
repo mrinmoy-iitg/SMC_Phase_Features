@@ -15,39 +15,86 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D, BatchNormalization, Ac
 import lib.misc as misc
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.models import Model
+from tensorflow.keras import backend as K
 import time
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, CSVLogger
 from sklearn.preprocessing import StandardScaler
 from sklearn.feature_extraction.image import PatchExtractor
+import scipy
 
 
 
 
-def get_feature_patches(FV, patch_size, patch_shift, input_shape):
+def get_feature_patches(PARAMS, FV, patch_size, patch_shift, input_shape):
+    # Removing NaN and Inf
+    if any(np.array([9,10,21,22,39])==np.shape(FV)[1]): 
+        FV = FV[~np.isnan(FV).any(axis=1), :]
+        FV = FV[~np.isinf(FV).any(axis=1), :]
+    else:
+        FV = FV[:, ~np.isnan(FV).any(axis=0)]
+        FV = FV[:, ~np.isinf(FV).any(axis=0)]
+
+    FV = StandardScaler(copy=False).fit_transform(FV)
+    # FV should be of the shape (nFeatures, nFrames)
     if any(np.array([9,10,21,22,39])==np.shape(FV)[1]): 
         FV = FV.T
-    # Removing NaN and Inf
-    FV = FV[:, ~np.isnan(FV).any(axis=0)]
-    FV = FV[:, ~np.isinf(FV).any(axis=0)]
-
-    # FV should be of the shape (nFeatures, nFrames)
-    FV = StandardScaler(copy=False).fit_transform(FV)
                 
+    frmStart = 0
+    frmEnd = 0
+    patchNum = 0
     patches = np.empty([])
+
     if np.shape(FV)[1]<patch_size:
         FV1 = FV.copy()
         while np.shape(FV)[1]<=patch_size:
             FV = np.append(FV, FV1, axis=1)
+
+    # while frmEnd<np.shape(FV)[1]:
+    #     # print('get_feature_patches: ', frmStart, frmEnd, np.shape(FV))
+    #     frmStart = patchNum*patch_shift
+    #     frmEnd = np.min([patchNum*patch_shift+patch_size, np.shape(FV)[1]])
+    #     if frmEnd-frmStart<patch_size:
+    #         frmStart = frmEnd - patch_size
+    #     if np.size(patches)<=1:
+    #         patches = np.expand_dims(FV[:, frmStart:frmEnd], axis=0)
+    #     else:
+    #         patches = np.append(patches, np.expand_dims(FV[:, frmStart:frmEnd], axis=0), axis=0)
+    #     patchNum += 1
+
+
+    # startTime = time.clock()
+    # for frmStart in range(0, np.shape(FV)[1], patch_shift):
+    #     # print('get_feature_patches: ', frmStart, frmEnd, np.shape(FV))
+    #     frmEnd = np.min([frmStart+patch_size, np.shape(FV)[1]])
+    #     if frmEnd-frmStart<patch_size:
+    #         frmStart = frmEnd - patch_size
+    #     if np.size(patches)<=1:
+    #         patches = np.array(FV[:, frmStart:frmEnd], ndmin=3)
+    #     else:
+    #         patches = np.append(patches, np.array(FV[:, frmStart:frmEnd], ndmin=3), axis=0)
+    # print('My splitting: ', time.clock()-startTime, np.shape(patches))
     
+    
+    startTime = time.clock()
     numPatches = int(np.ceil(np.shape(FV)[1]/patch_shift))
     patches = PatchExtractor(patch_size=(np.shape(FV)[0], patch_size), max_patches=numPatches).transform(np.expand_dims(FV, axis=0))
+    # print('sklearn splitting: ', time.clock()-startTime, np.shape(patches))
 
+
+    # print('Patches: ', np.shape(patches))
     if (np.shape(patches)[1]==9) or (np.shape(patches)[1]==10):
         diff_dim = input_shape[0]-np.shape(patches)[1]
         zero_padding = np.zeros((np.shape(patches)[0], diff_dim, np.shape(patches)[2]))
         patches = np.append(patches, zero_padding, axis=1)
-
+    elif np.shape(patches)[1]==22:
+        patches = patches[:,:21, :]
+    elif np.shape(patches)[1]==39:
+        if not PARAMS['39_dim_CC_feat']:
+            first_7_cep_dim = np.array(list(range(0,7))+list(range(13,20))+list(range(26,33)))
+            patches = patches[:, first_7_cep_dim, :]
+    # print('Patches: ', np.shape(patches))
+    
     return patches
 
 
@@ -77,7 +124,7 @@ def generator(PARAMS, folder, file_list, batchSize):
                 continue
             # print('sp_fName_path: ', sp_fName_path)
             fv_sp = np.load(sp_fName_path, allow_pickle=True)
-            fv_sp = get_feature_patches(fv_sp, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
+            fv_sp = get_feature_patches(PARAMS, fv_sp, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
             fv_sp = np.expand_dims(fv_sp, axis=3)
             if balance_sp==0:
                 batchData_sp = fv_sp
@@ -95,7 +142,7 @@ def generator(PARAMS, folder, file_list, batchSize):
                 continue
             # print('mu_fName_path: ', mu_fName_path)
             fv_mu = np.load(mu_fName_path, allow_pickle=True)
-            fv_mu = get_feature_patches(fv_mu, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
+            fv_mu = get_feature_patches(PARAMS, fv_mu, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
             fv_mu = np.expand_dims(fv_mu, axis=3)
             if balance_mu==0:
                 batchData_mu = fv_mu
@@ -181,53 +228,69 @@ def get_cnn_model(input_shape, num_classes):
     '''
     Baseline :- Doukhan et. al. MIREX 2018 MUSIC AND SPEECH DETECTION SYSTEM
     '''
-    input_img = Input(input_shape)
+    # import tensorflow.keras.backend as K
+    
+    input_img = Input((input_shape[0], input_shape[1], input_shape[2]))
+    # print('0: ', K.int_shape(input_img))
 
     x = Conv2D(64, kernel_size=(4, 5), strides=(1, 1), kernel_regularizer=l2())(input_img)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
+    # print('1: ', K.int_shape(x))
 
     x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
+    # print('2: ', K.int_shape(x))
     
     x = Conv2D(128, kernel_size=(3, 3), strides=(1, 1), kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
+    # print('3: ', K.int_shape(x))
 
     x = Conv2D(128, kernel_size=(3, 3), strides=(1, 1), kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
+    # print('4: ', K.int_shape(x))
 
     x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='same')(x)
+    # print('5: ', K.int_shape(x))
     
     x = Conv2D(256, kernel_size=(3, 3), strides=(1, 1), kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
+    # print('6: ', K.int_shape(x))
 
     x = MaxPooling2D(pool_size=(1, 12), strides=(1, 12))(x)
+    # print('7: ', K.int_shape(x))
     
     x = Flatten()(x)
+    # print('8: ', K.int_shape(x))
     
     x = Dense(512, kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
     x = Dropout(0.2)(x)
+    # print('9: ', K.int_shape(x))
 
     x = Dense(512, kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
     x = Dropout(0.3)(x)
+    # print('10: ', K.int_shape(x))
 
     x = Dense(512, kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
     x = Dropout(0.4)(x)
+    # print('11: ', K.int_shape(x))
 
     x = Dense(512, kernel_regularizer=l2())(x)
     x = BatchNormalization()(x)
     x = Activation('relu')(x)
     x = Dropout(0.5)(x)
+    # print('12: ', K.int_shape(x))
 
     output = Dense(num_classes, activation='softmax', kernel_regularizer=l2())(x)
+    # print('13: ', K.int_shape(output))
 
     model = Model(input_img, output)
     learning_rate = 0.0001
@@ -265,7 +328,7 @@ def train_cnn(PARAMS):
         if PARAMS['save_flag']:
             model.save_weights(weightFile) # Save the weights
             with open(architechtureFile, 'w') as f: # Save the model architecture
-                f.write(model.to_json())
+                f.write(model.to_json())                
             np.savez(paramFile, epochs=PARAMS['epochs'], batch_size=PARAMS['batch_size'], input_shape=PARAMS['input_shape'], lr=learning_rate, trainingTimeTaken=trainingTimeTaken)
         print('CNN model trained.')
     else:
@@ -276,8 +339,13 @@ def train_cnn(PARAMS):
         trainingTimeTaken = np.load(paramFile)['trainingTimeTaken']
         optimizer = optimizers.Adam(lr=learning_rate)
         
-        with open(architechtureFile, 'r') as f: # Model reconstruction from JSON file
-            model = model_from_json(f.read())
+        # with open(architechtureFile, 'r') as f: # Model reconstruction from JSON file
+        #     model = model_from_json(f.read())
+        try:
+            with open(architechtureFile, 'r') as f: # Model reconstruction from JSON file
+                model = model_from_json(f.read())
+        except:
+            model, learning_rate_temp = get_cnn_model(PARAMS['input_shape'], 2)
         model.load_weights(weightFile) # Load weights into the new model
 
         model.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
@@ -303,9 +371,13 @@ def train_cnn(PARAMS):
 
 def generator_test(PARAMS, featName, file_name, clNum):
     fName = PARAMS['test_folder'] + '/' + featName + '/'+ PARAMS['classes'][clNum] + '/' + file_name
+    # startTime = time.clock()
     batchData = np.load(fName, allow_pickle=True)
+    # print('Loading: ', time.clock()-startTime)
 
-    batchData = get_feature_patches(batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
+    # startTime = time.clock()
+    batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
+    # print('Splitting: ', time.clock()-startTime)
 
     batchData = np.expand_dims(batchData, axis=3)
     numLab = np.shape(batchData)[0]
@@ -401,6 +473,27 @@ def test_cnn(PARAMS, Train_Params):
 
 
 
+def generator_test_ensemble(PARAMS, featName, file_name, clNum):
+    fName = PARAMS['test_folder'] + '/' + featName + '/'+ PARAMS['classes'][clNum] + '/' + file_name
+    # startTime = time.clock()
+    batchData = np.load(fName, allow_pickle=True)
+    # print('Loading: ', time.clock()-startTime)
+
+    # startTime = time.clock()
+    # print(np.shape(batchData))
+    # print(PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
+    batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'][featName])
+    # print('Splitting: ', time.clock()-startTime)
+
+    batchData = np.expand_dims(batchData, axis=3)
+    numLab = np.shape(batchData)[0]
+    batchLabel = np.array([clNum]*numLab)
+
+    return batchData, batchLabel
+
+
+
+
 def test_cnn_ensemble(PARAMS, Ensemble_Train_Params):
     start = time.clock()
     PtdLabels_Ensemble = []
@@ -411,7 +504,7 @@ def test_cnn_ensemble(PARAMS, Ensemble_Train_Params):
     individual_performances = {
         'Khonglah_et_al':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
         'Sell_et_al':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
-        'MFCC':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
+        'MFCC-39':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
         'Melspectrogram':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
         'HNGDMFCC':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]},
         'MGDCC':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
@@ -431,6 +524,7 @@ def test_cnn_ensemble(PARAMS, Ensemble_Train_Params):
             print('\t\t\t',PARAMS['fold'], PARAMS['classes'][clNum], fl, fl_count, '/', len(files), end='\t')
             count += 1
             PtdLabels = None
+            PtdLabels_temp = np.empty([])
             GroundTruth = np.empty([])
             Predictions = np.empty([])
             empty_predictions = False
@@ -447,13 +541,25 @@ def test_cnn_ensemble(PARAMS, Ensemble_Train_Params):
                 Train_Params = Ensemble_Train_Params[featName]
                 batchData = None
                 batchLabel = None
-                temp_file = temp_folder + '/pred_' + classname + '_fold' + str(PARAMS['fold']) + '_' + featName + '_' + fl.split('.')[0] + '.pkl'
-                if not os.path.exists(temp_file):
-                    batchData, batchLabel = generator_test(PARAMS, featName, fl, clNum)
+                temp_file = 'pred_' + classname + '_fold' + str(PARAMS['fold']) + '_' + featName + '_' + fl.split('.')[0]
+                # print(temp_folder, temp_file)
+                # print(featName, Train_Params['model'].layers[0].output_shape, PARAMS['input_shape'][featName])
+                if not os.path.exists(temp_folder + '/' + temp_file + '.pkl'):
+                    batchData, batchLabel = generator_test_ensemble(PARAMS, featName, fl, clNum)
+                    # print('batchData: ', np.shape(batchData), np.shape(batchLabel))
                     pred = Train_Params['model'].predict(x=batchData)
-                    misc.save_obj(pred, temp_folder, 'pred_' + classname + '_fold' + str(PARAMS['fold']) + '_' + featName + '_' + fl.split('.')[0])
+                    # print('pred: ', np.shape(pred))
+                    misc.save_obj(pred, temp_folder, temp_file)
                 else:
-                    pred = misc.load_obj(temp_folder, 'pred_' + classname + '_fold' + str(PARAMS['fold']) + '_' + featName + '_' + fl.split('.')[0])
+                    try:
+                        pred = misc.load_obj(temp_folder, temp_file)
+                    except:
+                        batchData, batchLabel = generator_test_ensemble(PARAMS, featName, fl, clNum)
+                        # print('batchData: ', np.shape(batchData), np.shape(batchLabel))
+                        pred = Train_Params['model'].predict(x=batchData)
+                        # print('pred: ', np.shape(pred))
+                        misc.save_obj(pred, temp_folder, temp_file)
+                        
                 # print('indv_labels: ', np.shape(indv_labels), np.shape(individual_performances[featName]['PtdLabels']))
                 if np.size(individual_performances[featName]['Predictions'])<=1:
                     individual_performances[featName]['Predictions'] = np.array(pred, ndmin=2)
@@ -464,15 +570,18 @@ def test_cnn_ensemble(PARAMS, Ensemble_Train_Params):
 
                 if np.size(Predictions)<=1:
                     Predictions = np.array(pred, ndmin=2)
+                    PtdLabels_temp = np.array(np.argmax(pred, axis=1), ndmin=2).T
                 else:
+                    # print('PtdLabels_temp: ', np.shape(PtdLabels_temp), np.shape(pred))
                     empty_predictions = False
                     if np.shape(pred)[0]!=np.shape(Predictions)[0]:
                         if np.shape(pred)[0]>np.shape(Predictions)[0]:
-                            pred = pred[np.shape(Predictions)[0], :]
+                            pred = pred[:np.shape(Predictions)[0], :]
                         else:
                             empty_predictions = True
                             break
                     Predictions = np.add(Predictions, np.array(pred, ndmin=2))
+                    PtdLabels_temp = np.append(PtdLabels_temp, np.array(np.argmax(pred, axis=1), ndmin=2).T, axis=1)
             
             if empty_predictions:
                 print(' ', end='\n')
@@ -480,7 +589,11 @@ def test_cnn_ensemble(PARAMS, Ensemble_Train_Params):
             
             GroundTruth = np.ones(np.shape(Predictions)[0])*clNum
             PtdLabels = np.argmax(Predictions, axis=1)
-            print(np.shape(Predictions), ' acc=', np.round(np.sum(PtdLabels==GroundTruth)*100/len(GroundTruth), 2), end='\n')
+            # PtdLabels, label_counts = scipy.stats.mode(PtdLabels_temp, axis=1)
+            # PtdLabels = np.array(PtdLabels.flatten())
+            # print('PtdLabels: ', np.shape(PtdLabels), ' GroundTruth: ', np.shape(GroundTruth))
+            
+            print(np.shape(Predictions), ' acc=', np.round(np.sum(PtdLabels==GroundTruth)*100/np.size(GroundTruth), 2), end='\n')
             if np.size(PtdLabels_Ensemble)<=1:
                 PtdLabels_Ensemble = PtdLabels
                 GroundTruth_Ensemble = GroundTruth
@@ -522,7 +635,11 @@ def generator_test_noise(PARAMS, featName, file_name, clNum, targetdB):
     fName = PARAMS['test_folder'] + '/' + featName + '/'+ PARAMS['classes'][clNum] + '/' + file_name
     batchData = np.load(fName, allow_pickle=True).item()[targetdB]
 
-    batchData = get_feature_patches(batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
+    # print('generator_test_noise: ', featName, PARAMS['input_shape'][featName])
+    if 'Ensemble' in PARAMS['clFunc']:
+        batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'][featName])
+    else:
+        batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
 
     batchData = np.expand_dims(batchData, axis=3)
     numLab = np.shape(batchData)[0]
@@ -613,7 +730,7 @@ def test_cnn_ensemble_noise(PARAMS, Ensemble_Train_Params):
     individual_performances = {
         'Khonglah_et_al': {db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'Sell_et_al':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
-        'MFCC':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
+        'MFCC-39':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'Melspectrogram':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'HNGDMFCC':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'MGDCC':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
@@ -703,6 +820,7 @@ def test_cnn_ensemble_noise(PARAMS, Ensemble_Train_Params):
     for dB in PARAMS['noise_dB_range']:
         # print(dB, np.shape(PtdLabels_Ensemble[dB]), np.shape(GroundTruth_Ensemble[dB]))
         ConfMat_dB, fscore_dB = misc.getPerformance(PtdLabels_Ensemble[dB], GroundTruth_Ensemble[dB])
+        ConfMat_dB = np.reshape(ConfMat_dB, (len(PARAMS['classes']),len(PARAMS['classes'])))
         accuracy_dB = np.round(np.sum(np.diag(ConfMat_dB))/np.sum(ConfMat_dB), 4)
         ConfMat_Ensemble[dB] = ConfMat_dB
         fscore_Ensemble[dB] = fscore_dB
@@ -728,3 +846,59 @@ def test_cnn_ensemble_noise(PARAMS, Ensemble_Train_Params):
 
     return Ensemble_Test_Params
 
+
+
+
+def train_cnn_transfer_learn(PARAMS, Frozen_Model_Params):
+    PARAMS['modelName'] = '@'.join(PARAMS['modelName'].split('.')[:-1]) + '.' + PARAMS['modelName'].split('.')[-1]
+    weightFile = PARAMS['modelName'].split('.')[0] + '.h5'
+    architechtureFile = PARAMS['modelName'].split('.')[0] + '.json'
+    paramFile = PARAMS['modelName'].split('.')[0] + '_params.npz'
+    logFile = PARAMS['modelName'].split('.')[0] + '_log.csv'
+    arch_file = PARAMS['modelName'].split('.')[0] + '_summary.txt'
+
+    PARAMS['modelName'] = '.'.join(PARAMS['modelName'].split('@'))
+    weightFile = '.'.join(weightFile.split('@'))
+    architechtureFile = '.'.join(architechtureFile.split('@'))
+    paramFile = '.'.join(paramFile.split('@'))
+    logFile = '.'.join(logFile.split('@'))
+    arch_file = '.'.join(arch_file.split('@'))
+        
+    if not os.path.exists(paramFile):
+        new_model = Frozen_Model_Params['new_model']
+        print_model_summary(arch_file, new_model)
+
+        model, trainingTimeTaken, History = train_model(PARAMS, new_model, weightFile)
+        
+        if PARAMS['save_flag']:
+            model.save_weights(weightFile) # Save the weights
+            with open(architechtureFile, 'w') as f: # Save the model architecture
+                f.write(model.to_json())
+            np.savez(paramFile, epochs=PARAMS['epochs'], batch_size=PARAMS['batch_size'], input_shape=PARAMS['input_shape'], lr=Frozen_Model_Params['learning_rate'], trainingTimeTaken=trainingTimeTaken)
+        print('CNN model trained.')
+    else:
+        PARAMS['epochs'] = np.load(paramFile)['epochs']
+        PARAMS['batch_size'] = np.load(paramFile)['batch_size']
+        PARAMS['input_shape'] = np.load(paramFile)['input_shape']
+        Frozen_Model_Params['learning_rate'] = np.load(paramFile)['lr']
+        trainingTimeTaken = np.load(paramFile)['trainingTimeTaken']
+        optimizer = optimizers.Adam(lr=Frozen_Model_Params['learning_rate'])
+        with open(architechtureFile, 'r') as f: # Model reconstruction from JSON file
+            model = model_from_json(f.read())
+        model.load_weights(weightFile) # Load weights into the new model
+        model.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+        print('CNN model exists! Loaded. Training time required=',trainingTimeTaken)
+      
+        
+    Train_Params = {
+            'model': model,
+            'trainingTimeTaken': trainingTimeTaken,
+            'epochs': PARAMS['epochs'],
+            'batch_size': PARAMS['batch_size'],
+            'learning_rate': Frozen_Model_Params['learning_rate'],
+            'paramFile': paramFile,
+            'architechtureFile': architechtureFile,
+            'weightFile': weightFile,
+            }
+    
+    return Train_Params

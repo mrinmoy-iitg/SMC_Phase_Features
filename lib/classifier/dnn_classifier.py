@@ -25,12 +25,11 @@ from tensorflow.keras.utils import to_categorical
 
 
 
-def get_feature_patches(FV, patch_size, patch_shift, input_shape):
+def get_feature_patches(PARAMS, FV, patch_size, patch_shift, input_shape):
+    FV = StandardScaler(copy=False).fit_transform(FV)
     # FV should be of the shape (nFeatures, nFrames)
     if any(np.array([9,10,21,22,39])==np.shape(FV)[1]): 
         FV = FV.T
-    FV = StandardScaler(copy=False).fit_transform(FV)
-
     patches = np.empty([])
 
     if np.shape(FV)[1]<patch_size:
@@ -46,7 +45,18 @@ def get_feature_patches(FV, patch_size, patch_shift, input_shape):
     patches_mean = np.mean(patches, axis=2)
     patches_var = np.var(patches, axis=2)
     patches_mean_var = np.append(patches_mean, patches_var, axis=1)
+    # print('sklearn splitting: ', time.clock()-startTime, np.shape(patches))
 
+
+    # print('Patches: ', np.shape(patches))
+    if np.shape(patches_mean_var)[1]==44:
+        patches_mean_var = patches_mean_var[:,list(range(0,21))+list(range(22,43))]
+    elif np.shape(patches_mean_var)[1]==78:
+        if not PARAMS['39_dim_CC_feat']:
+            first_7_cep_dim = np.array(list(range(0,7))+list(range(13,20))+list(range(26,33))+list(range(39,46))+list(range(52,59))+list(range(65,72)))
+            patches_mean_var = patches_mean_var[:, first_7_cep_dim]
+    # print('patches_mean_var: ', np.shape(patches_mean_var))
+    
     return patches_mean_var
 
 
@@ -72,11 +82,12 @@ def generator(PARAMS, folder, file_list, batchSize):
                 file_list_sp_temp = file_list['speech'].copy()
             sp_fName = file_list_sp_temp.pop()
             sp_fName_path = folder + '/' + PARAMS['featName'] + '/speech/' + sp_fName
+            # print('sp_fName_path: ', sp_fName_path)
             if not os.path.exists(sp_fName_path):
                 continue
             # print('sp_fName_path: ', sp_fName_path)
             fv_sp = np.load(sp_fName_path, allow_pickle=True)
-            fv_sp = get_feature_patches(fv_sp, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
+            fv_sp = get_feature_patches(PARAMS, fv_sp, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
             if balance_sp==0:
                 batchData_sp = fv_sp
             else:
@@ -93,7 +104,7 @@ def generator(PARAMS, folder, file_list, batchSize):
                 continue
             # print('mu_fName_path: ', mu_fName_path)
             fv_mu = np.load(mu_fName_path, allow_pickle=True)
-            fv_mu = get_feature_patches(fv_mu, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
+            fv_mu = get_feature_patches(PARAMS, fv_mu, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift'], PARAMS['input_shape'])
             if balance_mu==0:
                 batchData_mu = fv_mu
             else:
@@ -196,9 +207,14 @@ def dnn_model(input_dim, output_dim, num_dnn_lyr, num_dnn_nodes):
         x = Activation('relu')(x)
         x = Dropout(0.4)(x)
 
-    output_layer = Dense(1, kernel_regularizer=l2())(x)
-    output_layer = Activation('sigmoid')(output_layer)
-    loss_type = 'binary_crossentropy'
+    if output_dim>2:
+        output_layer = Dense(output_dim, kernel_regularizer=l2())(x)
+        output_layer = Activation('softmax')(output_layer)
+        loss_type = 'categorical_crossentropy'
+    else:
+        output_layer = Dense(1, kernel_regularizer=l2())(x)
+        output_layer = Activation('sigmoid')(output_layer)
+        loss_type = 'binary_crossentropy'
 
     model = Model(input_layer, output_layer)
     
@@ -265,8 +281,16 @@ def train_dnn(PARAMS, train_data, train_label, num_dnn_lyr, num_dnn_nodes):
         trainingTimeTaken = float(np.load(paramFile)['TTT'])
         optimizerName = 'Adam'
 
-        with open(architechtureFile, 'r') as f:
-            model = model_from_json(f.read())
+        # with open(architechtureFile, 'r') as f:
+        #     model = model_from_json(f.read())
+        try:
+            with open(architechtureFile, 'r') as f: # Model reconstruction from JSON file
+                model = model_from_json(f.read())
+        except:
+            num_dnn_lyr = PARAMS['DNN_optimal_params'][PARAMS['dataset_name']][PARAMS['featName']]['hidden_lyrs']
+            num_dnn_nodes = PARAMS['DNN_optimal_params'][PARAMS['dataset_name']][PARAMS['featName']]['hidden_nodes']
+            model, optimizerName, learning_rate_temp = dnn_model(PARAMS['input_dim'], 1, num_dnn_lyr, num_dnn_nodes)
+
         model.load_weights(weightFile)
         opt = optimizers.Adam(lr=learning_rate)
         model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
@@ -293,8 +317,10 @@ def train_dnn(PARAMS, train_data, train_label, num_dnn_lyr, num_dnn_nodes):
 
 def generator_test(PARAMS, featName, file_name, clNum):
     fName = PARAMS['test_folder'] + '/' + featName + '/'+ PARAMS['classes'][clNum] + '/' + file_name
+    if not os.path.exists(fName):
+        return [], []
     batchData = np.load(fName, allow_pickle=True)
-    batchData = get_feature_patches(batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
+    batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
     # batchData = StandardScaler(copy=False).fit_transform(batchData)
     numLab = np.shape(batchData)[0]
     batchLabel = np.array([clNum]*numLab)
@@ -340,6 +366,8 @@ def test_model(PARAMS, test_data, test_label, Train_Params):
             for fl in files:
                 count += 1
                 batchData, batchLabel = generator_test(PARAMS, PARAMS['featName'], fl, clNum)
+                if batchData==[]:
+                    continue
                 # endTime = time.clock()
                 # print('Data loading time: ', endTime-startTime)
                 
@@ -396,6 +424,19 @@ def test_dnn(PARAMS, test_data, test_label, Train_Params):
 
 
 
+def generator_test_ensemble(PARAMS, featName, file_name, clNum):
+    fName = PARAMS['test_folder'] + '/' + featName + '/'+ PARAMS['classes'][clNum] + '/' + file_name
+    batchData = np.load(fName, allow_pickle=True)
+    batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'][featName])
+    # batchData = StandardScaler(copy=False).fit_transform(batchData)
+    numLab = np.shape(batchData)[0]
+    batchLabel = np.array([clNum]*numLab)
+
+    return batchData, batchLabel
+
+
+
+
 def test_dnn_ensemble(PARAMS, Ensemble_Train_Params):
     start = time.clock()
     PtdLabels_Ensemble = []
@@ -406,7 +447,7 @@ def test_dnn_ensemble(PARAMS, Ensemble_Train_Params):
     individual_performances = {
         'Khonglah_et_al':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
         'Sell_et_al':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
-        'MFCC':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
+        'MFCC-39':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
         'Melspectrogram':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
         'HNGDMFCC':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]},
         'MGDCC':{'Predictions':np.empty([]), 'GroundTruths':np.empty([]), 'fscore': [0, 0, 0]}, 
@@ -444,7 +485,7 @@ def test_dnn_ensemble(PARAMS, Ensemble_Train_Params):
                 batchLabel = None
                 temp_file = temp_folder + '/pred_' + classname + '_fold' + str(PARAMS['fold']) + '_' + featName + '_' + fl.split('.')[0] + '.pkl'
                 if not os.path.exists(temp_file):
-                    batchData, batchLabel = generator_test(PARAMS, featName, fl, clNum)
+                    batchData, batchLabel = generator_test_ensemble(PARAMS, featName, fl, clNum)
                     pred = Train_Params['model'].predict(x=batchData)
                     misc.save_obj(pred, temp_folder, 'pred_' + classname + '_fold' + str(PARAMS['fold']) + '_' + featName + '_' + fl.split('.')[0])
                 else:
@@ -465,7 +506,7 @@ def test_dnn_ensemble(PARAMS, Ensemble_Train_Params):
                     if np.shape(pred)[0]!=np.shape(Predictions)[0]:
                         # print('Predictions size mismatch ', featName, np.shape(Predictions), np.shape(pred))
                         if np.shape(pred)[0]>np.shape(Predictions)[0]:
-                            pred = pred[np.shape(Predictions)[0], :]
+                            pred = pred[:np.shape(Predictions)[0], :]
                         else:
                             empty_predictions = True
                             break
@@ -522,8 +563,11 @@ def test_dnn_ensemble(PARAMS, Ensemble_Train_Params):
 def generator_test_noise(PARAMS, featName, file_name, clNum, targetdB):
     fName = PARAMS['test_folder'] + '/' + featName + '/'+ PARAMS['classes'][clNum] + '/' + file_name
     batchData = np.load(fName, allow_pickle=True).item()[targetdB]
-
-    batchData = get_feature_patches(batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])
+    
+    if 'Ensemble' in PARAMS['clFunc']:
+        batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'][featName])
+    else:
+        batchData = get_feature_patches(PARAMS, batchData, PARAMS['CNN_patch_size'], PARAMS['CNN_patch_shift_test'], PARAMS['input_shape'])        
     numLab = np.shape(batchData)[0]
     batchLabel = np.array([clNum]*numLab)
 
@@ -611,7 +655,7 @@ def test_dnn_ensemble_noise(PARAMS, Ensemble_Train_Params):
     individual_performances = {
         'Khonglah_et_al': {db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'Sell_et_al':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
-        'MFCC':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
+        'MFCC-39':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'Melspectrogram':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'HNGDMFCC':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
         'MGDCC':{db:basic_storage_cell for db in PARAMS['noise_dB_range']}, 
